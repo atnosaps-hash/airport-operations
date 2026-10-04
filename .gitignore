@@ -1,0 +1,462 @@
+const API_BASE = 'http://localhost:8000/api';
+
+const state = {
+  view: 'overview',
+  selectedAgent: 0,
+  reportTab: 'pre',
+  reportPeriod: 'h',
+  loginFilter: false,
+};
+
+function renderNav(items) {
+  const nav = document.getElementById('nav');
+  nav.innerHTML = `
+    <div class="brand">Airport AI Hub<small>LAN · offline-capable</small></div>
+    ${items.map(([key, label, badge]) => `
+      <button class="nav-btn ${state.view === key ? 'active' : ''}" data-view="${key}">
+        <span>${label}</span>
+        ${badge ? `<span class="badge">${badge}</span>` : ''}
+      </button>
+    `).join('')}
+  `;
+
+  nav.querySelectorAll('[data-view]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.view = btn.dataset.view;
+      render();
+    });
+  });
+}
+
+function renderOverview(data) {
+  const total = data.total_agents;
+  const active = data.active_agents;
+  const open = data.open_incidents;
+  const pending = data.pending_approvals;
+
+  return `
+    <div class="container">
+      <div class="hero">
+        <div>
+          <h2>Pusat Operasi Bandara</h2>
+          <p class="subtle">Terminal 1 & 2. Semua sistem dalam satu layar, AI berjalan di LAN lokal.</p>
+        </div>
+        <div class="chips">
+          <span class="chip">${active}/${total} agent online</span>
+          <span class="chip">${open} insiden terbuka</span>
+          <span class="chip">${pending} menunggu persetujuan</span>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="card"><p class="kpi">${active}/${total}</p><small>agent online</small></div>
+        <div class="card"><p class="kpi">${open}</p><small>insiden terbuka</small></div>
+        <div class="card"><p class="kpi">${pending}</p><small>menunggu persetujuan</small></div>
+        <div class="card"><p class="kpi">LAN</p><small>LLM lokal, internet opsional</small></div>
+      </div>
+
+      <h3>Keselamatan & lingkungan</h3>
+      <div class="grid">
+        ${[
+          ['FIRE-001','Fire alarm','ALARM','Zona T1-B aktif','er'],
+          ['PANIC-001','Panic button','24/24','tombol OK, uji terakhir 3 hari lalu','ok'],
+          ['TEMP-001','Suhu ruang server','31 °C','batas 30 °C, tren naik','warn'],
+          ['WIFI-001','Access point','312/318','AP online, 6 perlu dicek','warn'],
+        ].map(([id,name,value,detail,color]) => `
+          <div class="card ${color === 'er' ? 'danger' : color === 'warn' ? 'warn' : ''}">
+            <div class="row space-between">
+              <span>${name}</span>
+              <span class="pill ${color === 'er' ? 'er' : color === 'warn' ? 'warn' : 'ok'}">${id}</span>
+            </div>
+            <p class="kpi" style="font-size:1.8rem; margin-top:12px; color: var(--${color === 'er' ? 'danger' : color === 'warn' ? 'warning' : 'success'});">${value}</p>
+            <p class="muted">${detail}</p>
+          </div>
+        `).join('')}
+      </div>
+
+      <h3>Ketersediaan sistem</h3>
+      <div class="grid">
+        ${data.system_status.map((s) => `
+          <div class="card ${s.status === 'warn' ? 'warn' : ''}">
+            <div class="row space-between">
+              <span>${s.name}</span>
+              <strong>${s.value}%</strong>
+            </div>
+            <div class="bar ${s.status === 'warn' ? 'warn' : ''}"><span style="width:${s.value}%"></span></div>
+          </div>
+        `).join('')}
+      </div>
+
+      <h3>Komponen platform</h3>
+      <div class="row">
+        ${data.platform.map((item) => `
+          <span class="pill ${item.status === 'ok' ? 'ok' : 'warn'}"><span class="dot ${item.status === 'ok' ? '' : 'warn'}"></span>${item.name}</span>
+        `).join('')}
+      </div>
+
+      <h3>Aktivitas terbaru (audit)</h3>
+      <table>
+        <thead>
+          <tr><th>Waktu</th><th>Agent</th><th>Keterangan</th></tr>
+        </thead>
+        <tbody>
+          ${data.audit.map((row) => `
+            <tr>
+              <td>${row.time}</td>
+              <td>${row.agent}</td>
+              <td>${row.message}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderIncidents(data) {
+  return `
+    <div class="container">
+      <h2>Insiden</h2>
+      <p class="muted">Semua agent mengirim kejadian ke INCIDENT-001.</p>
+      <table>
+        <thead>
+          <tr><th>Tiket</th><th>Tingkat</th><th>Sistem / lokasi</th><th>Masalah</th><th>Status</th><th></th></tr>
+        </thead>
+        <tbody>
+          ${data.map((item, idx) => `
+            <tr>
+              <td>${item.id}<br><span class="muted">${item.time}</span></td>
+              <td><span class="dot ${item.severity === 'High' ? 'er' : item.severity === 'Medium' ? 'warn' : ''}"></span>${item.severity}</td>
+              <td>${item.system}<br><span class="muted">${item.location}</span></td>
+              <td>${item.problem}</td>
+              <td>
+                <div class="row">
+                  ${Array.from({length:4}).map((_, step) => `<span class="dot ${step <= item.state ? '' : 'plan'}"></span>`).join('')}
+                </div>
+                <span class="muted">${['Terdeteksi','Triase','Ditugaskan','Selesai'][item.state]}</span>
+              </td>
+              <td>${item.state < 3 ? `<button class="btn" data-action="advance-incident" data-index="${idx}">Lanjutkan</button>` : ''}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderApprovals(data) {
+  return `
+    <div class="container">
+      <h2>Persetujuan & izin</h2>
+      <table>
+        <thead><tr><th>Permintaan</th><th>Agent · fungsi</th><th>Pemohon</th><th></th></tr></thead>
+        <tbody>
+          ${data.map((item, idx) => `
+            <tr>
+              <td>${item.text}</td>
+              <td>${item.agent}</td>
+              <td>${item.actor}</td>
+              <td>
+                ${item.status === 0 ? `
+                  <div class="row">
+                    <button class="btn primary" data-action="approve" data-index="${idx}">Setujui</button>
+                    <button class="btn" data-action="reject" data-index="${idx}">Tolak</button>
+                  </div>
+                ` : item.status === 1 ? '<span class="pill ok">Disetujui</span>' : '<span class="pill er">Ditolak</span>'}
+              </td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderAgents(data) {
+  const agent = data[state.selectedAgent];
+  return `
+    <div class="container">
+      <h2>Registri agent</h2>
+      <div class="grid">
+        ${data.map((item, idx) => `
+          <button class="card ${item.status === 'warn' ? 'warn' : item.status === 'plan' ? 'plan' : ''}" data-action="select-agent" data-index="${idx}" style="text-align:left; ${idx === state.selectedAgent ? 'outline:2px solid var(--primary);' : ''}">
+            <div class="row space-between">
+              <strong>${item.name}</strong>
+              <span class="pill ${item.status === 'ok' ? 'ok' : item.status === 'warn' ? 'warn' : 'er'}">${item.id.split('-')[0]}</span>
+            </div>
+            <p class="muted" style="margin-top:8px;">${item.summary}</p>
+            <div class="row" style="margin-top:10px;"><span class="dot ${item.status === 'warn' ? 'warn' : item.status === 'plan' ? 'plan' : ''}"></span>${item.status === 'ok' ? 'Online' : item.status === 'warn' ? 'Perlu perhatian' : 'Direncanakan'} · ${item.uptime}%</div>
+          </button>
+        `).join('')}
+      </div>
+
+      <h3>${agent.id}</h3>
+      <div class="card">
+        <p class="muted">Endpoint: http://10.100.30.${11 + state.selectedAgent}: ${8001 + state.selectedAgent} · VLAN 30 · status ${agent.status}</p>
+        <div class="row">
+          ${agent.capabilities.map((cap) => `<span class="pill ok">${cap}</span>`).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function fetchApi(path) {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+function renderReports() {
+  const tabs = state.reportTab === 'pre' ? ['PM', 'Jadwal', 'Kepatuhan'] : ['Gangguan', 'WO', 'Korektif'];
+  return `
+    <div class="container">
+      <h2>Laporan ${state.reportTab === 'pre' ? 'preventif' : 'korektif'} ${state.reportPeriod === 'h' ? 'harian' : 'mingguan'}</h2>
+      <div class="row" style="margin-bottom:12px;">
+        <button class="btn ${state.reportTab === 'pre' ? 'primary' : ''}" data-action="report-tab" data-value="pre">Preventif</button>
+        <button class="btn ${state.reportTab === 'kor' ? 'primary' : ''}" data-action="report-tab" data-value="kor">Korektif</button>
+        <button class="btn ${state.reportPeriod === 'h' ? 'primary' : ''}" data-action="report-period" data-value="h">Harian</button>
+        <button class="btn ${state.reportPeriod === 'w' ? 'primary' : ''}" data-action="report-period" data-value="w">Mingguan</button>
+      </div>
+
+      <div class="grid">
+        <div class="card"><p class="kpi">${state.reportTab === 'pre' ? '92%' : '14'}</p><small>${state.reportTab === 'pre' ? 'kepatuhan jadwal' : 'gangguan tercatat'}</small></div>
+        <div class="card"><p class="kpi">${state.reportTab === 'pre' ? '3' : '6'}</p><small>${state.reportTab === 'pre' ? 'PM terlambat' : 'insiden terbuka'}</small></div>
+        <div class="card"><p class="kpi">${state.reportTab === 'pre' ? '11' : '7'}</p><small>${state.reportTab === 'pre' ? 'PM aktif' : 'WO selesai'}</small></div>
+      </div>
+
+      <div class="card">
+        <h3>Ringkasan</h3>
+        <ul>
+          ${tabs.map((item) => `<li>${item}</li>`).join('')}
+        </ul>
+      </div>
+    </div>
+  `;
+}
+
+function renderNetwork(data) {
+  return `
+    <div class="container">
+      <h2>Jaringan, VLAN, dan firewall</h2>
+      <table>
+        <thead><tr><th>VLAN</th><th>Nama</th><th>Subnet</th><th>Isi</th></tr></thead>
+        <tbody>
+          ${data.vlans.map((item) => `
+            <tr>
+              <td>${item.vlan}</td>
+              <td>${item.name}</td>
+              <td>${item.subnet}</td>
+              <td>${item.detail}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderPower(data) {
+  const totalLoad = data.ups.reduce((sum, item) => sum + item.power, 0).toFixed(1);
+  return `
+    <div class="container">
+      <h2>Daya PSU & UPS</h2>
+      <div class="grid">
+        <div class="card"><p class="kpi">${totalLoad} kW</p><small>total beban UPS</small></div>
+        <div class="card"><p class="kpi">${data.psu.length}</p><small>unit PSUs terpantau</small></div>
+        <div class="card"><p class="kpi">${data.psu.filter(p => p.status !== 'OK').length}</p><small>redundansi PSU terganggu</small></div>
+      </div>
+
+      <h3>UPS</h3>
+      <div class="grid">
+        ${data.ups.map((item) => `
+          <div class="card ${item.status === 'Baterai lemah' ? 'warn' : ''}">
+            <div class="row space-between">
+              <strong>${item.name}</strong>
+              <span class="pill ${item.status === 'Online' ? 'ok' : 'warn'}">${item.status}</span>
+            </div>
+            <p class="muted">${item.location} · ${item.voltage} · ${item.power} kW</p>
+            <div class="row" style="margin-top:10px;">
+              <button class="btn">Uji baterai</button>
+              <button class="btn danger">Transfer beban</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderMaintenance(data) {
+  const late = data.pm.filter(item => item.days_until < 0).length;
+  return `
+    <div class="container">
+      <h2>Maintenance</h2>
+      <div class="grid">
+        <div class="card"><p class="kpi">${data.pm.length - late}/${data.pm.length}</p><small>PM tepat waktu</small></div>
+        <div class="card danger"><p class="kpi">${late}</p><small>PM terlambat</small></div>
+        <div class="card"><p class="kpi">${data.wo.filter(w => w.state < 3).length}</p><small>WO korektif terbuka</small></div>
+      </div>
+
+      <h3>Jadwal preventif</h3>
+      <table>
+        <thead><tr><th>ID</th><th>Pekerjaan</th><th>Sistem</th><th>Frekuensi</th><th>Jatuh tempo</th></tr></thead>
+        <tbody>
+          ${data.pm.map((item) => `
+            <tr>
+              <td>${item.id}</td>
+              <td>${item.title}</td>
+              <td>${item.system}</td>
+              <td>${item.frequency}</td>
+              <td>${item.days_until < 0 ? `<span class="pill er">Terlambat ${Math.abs(item.days_until)} hari</span>` : `${item.days_until} hari`}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderUsers(data) {
+  const active = data.filter(u => u.active).length;
+  return `
+    <div class="container">
+      <h2>Pengguna & histori login</h2>
+      <div class="grid">
+        <div class="card"><p class="kpi">${active}/${data.length}</p><small>akun aktif</small></div>
+        <div class="card"><p class="kpi">${data.filter(u => !u.mfa).length}</p><small>akun tanpa MFA</small></div>
+        <div class="card"><p class="kpi">2</p><small>login gagal (24 jam)</small></div>
+      </div>
+      <table>
+        <thead><tr><th>Nama</th><th>Peran</th><th>Unit</th><th>Role</th><th>MFA</th><th>Status</th></tr></thead>
+        <tbody>
+          ${data.map((u) => `
+            <tr>
+              <td>${u.name}<br><span class="muted">${u.username}</span></td>
+              <td>${u.role}</td>
+              <td>${u.unit}</td>
+              <td>${u.role}</td>
+              <td>${u.mfa ? 'Aktif' : 'Belum'}</td>
+              <td><span class="dot ${u.active ? '' : 'er'}"></span>${u.active ? 'Aktif' : 'Nonaktif'}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function render() {
+  const main = document.getElementById('main');
+
+  try {
+    const navItems = [
+      ['overview', 'Ikhtisar', null],
+      ['incidents', 'Insiden', null],
+      ['approvals', 'Persetujuan', null],
+      ['agents', 'Agent & Operasi', null],
+      ['network', 'Jaringan & VLAN', null],
+      ['power', 'Daya PSU & UPS', null],
+      ['maintenance', 'Maintenance', null],
+      ['users', 'Pengguna', null],
+      ['reports', 'Laporan', null],
+    ];
+    renderNav(navItems);
+
+    if (state.view === 'overview') {
+      const data = await fetchApi('/overview');
+      main.innerHTML = renderOverview(data);
+      return;
+    }
+
+    if (state.view === 'incidents') {
+      const data = await fetchApi('/incidents');
+      main.innerHTML = renderIncidents(data);
+      return;
+    }
+
+    if (state.view === 'approvals') {
+      const data = await fetchApi('/approvals');
+      main.innerHTML = renderApprovals(data);
+      return;
+    }
+
+    if (state.view === 'agents') {
+      const data = await fetchApi('/agents');
+      main.innerHTML = renderAgents(data);
+      return;
+    }
+
+    if (state.view === 'network') {
+      const data = await fetchApi('/network');
+      main.innerHTML = renderNetwork(data);
+      return;
+    }
+
+    if (state.view === 'power') {
+      const data = await fetchApi('/power');
+      main.innerHTML = renderPower(data);
+      return;
+    }
+
+    if (state.view === 'maintenance') {
+      const data = await fetchApi('/maintenance');
+      main.innerHTML = renderMaintenance(data);
+      return;
+    }
+
+    if (state.view === 'users') {
+      const data = await fetchApi('/users');
+      main.innerHTML = renderUsers(data);
+      return;
+    }
+
+    if (state.view === 'reports') {
+      main.innerHTML = renderReports();
+      return;
+    }
+
+    const data = await fetchApi('/overview');
+    main.innerHTML = renderOverview(data);
+  } catch (error) {
+    main.innerHTML = `<div class="container"><div class="card danger"><h3>Gagal terhubung ke backend</h3><p class="muted">Pastikan backend aktif di http://localhost:8000</p></div></div>`;
+    console.error(error);
+  }
+}
+
+document.addEventListener('click', (event) => {
+  const target = event.target.closest('[data-action]');
+  if (!target) return;
+
+  const action = target.dataset.action;
+
+  if (action === 'advance-incident') {
+    alert('Simulasi: status insiden maju satu tahap');
+    return;
+  }
+
+  if (action === 'approve' || action === 'reject') {
+    alert(`Permintaan ${action === 'approve' ? 'disetujui' : 'ditolak'}`);
+    return;
+  }
+
+  if (action === 'select-agent') {
+    state.selectedAgent = Number(target.dataset.index);
+    render();
+    return;
+  }
+
+  if (action === 'report-tab') {
+    state.reportTab = target.dataset.value;
+    render();
+    return;
+  }
+
+  if (action === 'report-period') {
+    state.reportPeriod = target.dataset.value;
+    render();
+    return;
+  }
+});
+
+render();
